@@ -53,7 +53,7 @@ async function deploy() {
     contract.foxFarm = await FoxFarm.deploy(
         contract.oracleFeeder.address, signer.feeTo.address,
         contract.weth.address, contract.sin.address, contract.foxs.address, contract.fox.address, contract.coupon.address,
-        7000, ethers.constants.MaxUint256, 200
+        7000, ethers.constants.MaxUint256, 200, 1000, 1000
     );
     await contract.foxFarm.deployed();
     console.log(":\t\t", contract.foxFarm.address);
@@ -65,6 +65,21 @@ async function deploy() {
     );
     await contract.gateway.deployed();
     console.log(":\t\t", contract.gateway.address);
+
+    process.stdout.write("Deploy USDC");
+    const USDC = await ethers.getContractFactory("TestERC20", signer.owner);
+    contract.usdc = await USDC.deploy();
+    await contract.usdc.deployed();
+    console.log(":\t\t", contract.usdc.address);
+
+    process.stdout.write("Deploy PSM");
+    const Psm = await ethers.getContractFactory("PSM", signer.owner);
+    contract.psm = await Psm.deploy(
+        contract.usdc.address, contract.sin.address,
+        signer.feeTo.address, 10, 100
+    );
+    await contract.psm.deployed();
+    console.log(":\t\t", contract.psm.address);
 
     fs.writeFileSync("address.json", JSON.stringify({
         "Owner": signer.owner.address,
@@ -78,7 +93,9 @@ async function deploy() {
         "FOX": contract.fox.address,
         "Coupon": contract.coupon.address,
         "FoxFarm": contract.foxFarm.address,
-        "Gateway": contract.gateway.address
+        "Gateway": contract.gateway.address,
+        "USDC": contract.usdc.address,
+        "PSM": contract.psm.address
     }, null, 4));
 }
 
@@ -91,23 +108,36 @@ async function init() {
     // await txRes.wait();
     // console.log(" - complete");
 
-    //============ Ownership ============//
+    //============ SIN & NIS ============//
 
-    process.stdout.write("[SIN]\t\tChange SIN's owner to FoxFarm");
-    txRes = await contract.sin.connect(signer.owner).transferOwnership(contract.foxFarm.address);
+    process.stdout.write("[SIN]\t\tSet SIN's whitelist - FoxFarm");
+    txRes = await contract.sin.connect(signer.owner).addAllowlist(contract.foxFarm.address);
     await txRes.wait();
     console.log(" - complete");
 
-    // process.stdout.write("[NIS] Change NIS's owner to Coupon");
-    // console.log(" - complete");
+    process.stdout.write("[SIN]\t\tSet SIN's whitelist - PSM");
+    txRes = await contract.sin.connect(signer.owner).addAllowlist(contract.psm.address);
+    await txRes.wait();
+    console.log(" - complete");
 
-    // process.stdout.write("[Coupon] Change Coupon's owner to FoxFarm");
-    // console.log(" - complete");
+    process.stdout.write("[NIS]\t\tSet NIS's whitelist - Coupon");
+    txRes = await contract.nis.connect(signer.owner).addAllowlist(contract.coupon.address);
+    await txRes.wait();
+    console.log(" - complete");
 
     //============ FOX ============//
 
     process.stdout.write("[FOX]\t\tSubmit FoxFarm");
     txRes = await contract.fox.connect(signer.owner).initialize(
+        contract.foxFarm.address
+    );
+    await txRes.wait();
+    console.log(" - complete");
+
+    //============ Coupon ============//
+
+    process.stdout.write("[Coupon]\tTransfer Ownership");
+    txRes = await contract.coupon.connect(signer.owner).transferOwnership(
         contract.foxFarm.address
     );
     await txRes.wait();

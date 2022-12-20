@@ -15,7 +15,9 @@ let contract = {
     "fox": null,
     "coupon": null,
     "foxFarm": null,
-    "gateway": null
+    "gateway": null,
+    "usdc": null,
+    "psm": null
 };
 
 async function set() {
@@ -53,12 +55,24 @@ async function attach() {
     contract.foxFarm = await ethers.getContractAt("FoxFarm", address.FoxFarm);
     console.log(" - complete");
 
+    process.stdout.write("Attach Coupon");
+    contract.coupon = await ethers.getContractAt("Coupon", address.Coupon);
+    console.log(" - complete");
+
     process.stdout.write("Attach Gateway");
     contract.gateway = await ethers.getContractAt("FoxFarmGateway", address.Gateway);
     console.log(" - complete");
 
     process.stdout.write("Attach OracleFeeder");
     contract.oracleFeeder = await ethers.getContractAt("OracleFeeder", address.OracleFeeder);
+    console.log(" - complete");
+
+    process.stdout.write("Attach USDC");
+    contract.usdc = await ethers.getContractAt("TestERC20", address.USDC);
+    console.log(" - complete");
+
+    process.stdout.write("Attach PSM");
+    contract.psm = await ethers.getContractAt("PSM", address.PSM);
     console.log(" - complete");
 }
 

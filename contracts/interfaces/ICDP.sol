@@ -57,11 +57,30 @@ interface ICDP {
         uint256 currTimestamp
     );
 
+    event Liquidate(
+        address indexed account_,
+        uint256 indexed id_,
+        uint256 debtAmount_,
+        uint256 collateralAmount_
+    );
+
     event SetMaxLTV(uint256 prevMaxLTV, uint256 currMaxLTV);
     event SetCap(uint256 prevCap, uint256 currCap);
 
     event SetFeeTo(address prevFeeTo, address currFeeTo);
     event SetFeeRatio(uint256 prevFeeRatio, uint256 currFeeRatio);
+    event SetLiquidationPenaltyRatio(
+        uint256 prevLiquidationPenaltyRatio,
+        uint256 currLiquidationPenaltyRatio
+    );
+    event SetLiquidationProtocolFeeRatio(
+        uint256 prevLiquidationProtocolFeeRatio,
+        uint256 currLiquidationProtocolFeeRatio
+    );
+    event SetLiquidationBufferRatio(
+        uint256 prevLiquidationBufferRatio,
+        uint256 currLiquidationBufferRatio
+    );
 
     //============ Owner ============//
 
@@ -72,6 +91,18 @@ interface ICDP {
     function setFeeTo(address newFeeTo) external;
 
     function setFeeRatio(uint256 newFeeRatio) external;
+
+    function setLiquidationPenaltyRatio(
+        uint256 newLiquidationPenaltyRatio
+    ) external;
+
+    function setLiquidationProtocolFeeRatio(
+        uint256 newLiquidationProtocolFeeRatio
+    ) external;
+
+    function setLiquidationBufferRatio(
+        uint256 newLiquidationBufferRatio
+    ) external;
 
     //============ Pausable ============//
 
@@ -102,24 +133,14 @@ interface ICDP {
 
     //============ View Functions ============//
 
-    function cdp(uint256 id_)
-        external
-        view
-        returns (CollateralizedDebtPosition memory);
+    function cdp(
+        uint256 id_
+    ) external view returns (CollateralizedDebtPosition memory);
 
-    function cdpInfo(uint256 id_)
-        external
-        view
-        returns (
-            uint256 collateralAmount_,
-            uint256 ltv_,
-            uint256 fee_
-        );
-
-    function calculatedLtv(uint256 collateralAmount_, uint256 debtAmount_)
-        external
-        view
-        returns (uint256 ltv_);
+    function calculatedLtv(
+        uint256 collateralAmount_,
+        uint256 debtAmount_
+    ) external view returns (uint256 ltv_);
 
     //============ View Functions (CDP) ============//
 
@@ -128,10 +149,14 @@ interface ICDP {
         uint256 ltv_
     ) external view returns (uint256 debtAmount_);
 
-    function collateralAmountFromDebtWithLtv(uint256 debtAmount_, uint256 ltv_)
-        external
-        view
-        returns (uint256 collateralAmount_);
+    function collateralAmountFromDebtWithLtv(
+        uint256 debtAmount_,
+        uint256 ltv_
+    ) external view returns (uint256 collateralAmount_);
+
+    function debtAmountRangeWhenLiquidate(
+        uint256 id_
+    ) external view returns (uint256 upperBound_, uint256 lowerBound_);
 
     //============ CDP Operations ============//
 
@@ -166,9 +191,9 @@ interface ICDP {
         uint256 withdrawAmount_
     ) external;
 
-    function liquidate(uint256 id_) external;
+    function liquidate(uint256 id_, uint256 amount_) external;
 
-    function globalLiquidate() external;
+    function globalLiquidate(uint256 id_, uint256 amount_) external;
 
     function updateFee(uint256 id_) external returns (uint256 additionalFee);
 }

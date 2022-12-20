@@ -43,7 +43,9 @@ contract FoxFarm is IFoxFarm, CDP, Nonzero {
         address coupon_,
         uint256 maxLTV_,
         uint256 cap_,
-        uint256 feeRatio_ // stability fee
+        uint256 feeRatio_, // stability fee
+        uint256 liquidationPenaltyRatio_,
+        uint256 liquidationBufferRatio_
     )
         nonzeroAddress(oracleFeeder_)
         nonzeroAddress(collateralToken_)
@@ -58,7 +60,9 @@ contract FoxFarm is IFoxFarm, CDP, Nonzero {
             debtToken_,
             maxLTV_,
             cap_,
-            feeRatio_
+            feeRatio_,
+            liquidationPenaltyRatio_,
+            liquidationBufferRatio_
         )
         nonzeroAddress(stableToken_)
         nonzeroAddress(coupon_)
@@ -115,7 +119,6 @@ contract FoxFarm is IFoxFarm, CDP, Nonzero {
         _shareToken.safeTransfer(account_, shareAmount_);
     }
 
-    // TODO: test
     function _close(address account_, uint256 id_) internal override {
         CollateralizedDebtPosition storage _cdp = _cdps[id_];
 
@@ -145,18 +148,19 @@ contract FoxFarm is IFoxFarm, CDP, Nonzero {
         uint256 depositAmount_,
         uint256 borrowAmount_
     ) external whenNotPaused {
+        address msgSender = _msgSender();
+
         if (id_ < id) {
-            // deposit & borrow
-            _deposit(_msgSender(), id_, depositAmount_);
-            _borrow(_msgSender(), id_, borrowAmount_);
-        } else {
-            address msgSender = _msgSender();
-            _update(id_);
             require(
                 _isApprovedOrOwner(msgSender, id_),
                 "CDP::onlyCdpApprovedOrOwner: Not a valid caller."
             );
 
+            // deposit & borrow
+            _update(id_);
+            _deposit(msgSender, id_, depositAmount_);
+            _borrow(msgSender, id_, borrowAmount_);
+        } else {
             // open & deposit & borrow
             id_ = _open(msgSender);
             _update(id_);
@@ -172,22 +176,21 @@ contract FoxFarm is IFoxFarm, CDP, Nonzero {
         uint256 repayAmount_,
         uint256 withdrawAmount_
     ) external whenNotPaused {
-        if (id_ < id) {
-            _update(id_);
+        address msgSender = _msgSender();
 
+        if (id_ < id) {
             // repay & withdraw
-            address msgSender = _msgSender();
+            _update(id_);
             _repay(msgSender, id_, repayAmount_);
             _withdraw(msgSender, id_, withdrawAmount_);
         } else {
-            address msgSender = _msgSender();
-            _update(id_);
             require(
                 _isApprovedOrOwner(msgSender, id_),
                 "CDP::onlyCdpApprovedOrOwner: Not a valid caller."
             );
 
             // (repay & withdraw) & close
+            _update(id_);
             _close(msgSender, id_);
         }
     }
@@ -208,7 +211,7 @@ contract FoxFarm is IFoxFarm, CDP, Nonzero {
     {
         _deposit(_msgSender(), id_, collateralAmount_);
 
-        CollateralizedDebtPosition memory _cdp = _cdps[id_];
+        CollateralizedDebtPosition memory _cdp = cdp(id_);
         uint256 debtAmount_ = debtAmountFromCollateralToLtv(
             _cdp.collateral,
             ltv_
@@ -224,24 +227,10 @@ contract FoxFarm is IFoxFarm, CDP, Nonzero {
 
     //============ FOX Operations (Buyback) ============//
 
-    function buybackRepayDebt(uint256 id_, uint256 shareAmount_)
-        external
-        updateIdFirst(id_)
-        whenNotPaused
-        onlyGloballyHealthy
-        returns (uint256 debtAmount_)
-    {
-        _shareToken.safeTransferFrom(_msgSender(), address(this), shareAmount_);
-
-        debtAmount_ = _stableToken.buyback(address(this), shareAmount_);
-
-        super._repay(address(this), id_, debtAmount_);
-    }
-
-    function buybackWithdrawCollateral(
+    function buyback(
         address account_,
         uint256 id_,
-        uint256 amount_, // shareAmount
+        uint256 shareAmount_,
         uint256 ltv_
     )
         external
@@ -253,48 +242,64 @@ contract FoxFarm is IFoxFarm, CDP, Nonzero {
     {
         address msgSender = _msgSender();
 
-        _shareToken.safeTransferFrom(msgSender, address(this), amount_);
-        debtAmount_ = _stableToken.buyback(address(this), amount_);
+        _shareToken.safeTransferFrom(msgSender, address(this), shareAmount_);
+        debtAmount_ = _stableToken.buyback(address(this), shareAmount_);
 
         super._repay(address(this), id_, debtAmount_);
 
-        CollateralizedDebtPosition memory _cdp = _cdps[id_];
+        CollateralizedDebtPosition memory _cdp = cdp(id_);
         uint256 withdrawAmount_ = _cdp.collateral -
             collateralAmountFromDebtWithLtv(_cdp.debt + _cdp.fee, ltv_);
+
         _withdraw(account_, id_, withdrawAmount_);
     }
 
     //============ Coupon Operations ============//
 
-    function buybackCoupon(address account_, uint256 amount_)
+    function buybackCoupon(
+        address account_,
+        uint256 shareAmount_
+    )
         external
         whenNotPaused
         onlyGloballyHealthy
         returns (uint256 pid_, uint256 debtAmount_)
     {
-        _shareToken.safeTransferFrom(_msgSender(), address(this), amount_);
-        debtAmount_ = _stableToken.buyback(address(this), amount_);
+        _shareToken.safeTransferFrom(_msgSender(), address(this), shareAmount_);
+        debtAmount_ = _stableToken.buyback(address(this), shareAmount_);
 
-        pid_ = _coupon.mintTo(account_, amount_, debtAmount_);
+        pid_ = _coupon.mintTo(account_, shareAmount_, debtAmount_);
     }
 
     /**
      * @notice Pair annihilation between SIN and NIS.
      */
-    function pairAnnihilation(uint256 cid_, uint256 pid_)
-        external
-        updateIdFirst(cid_)
-        whenNotPaused
-    {
-        (, uint256 grantAmount_) = _coupon.burn(pid_);
+    function pairAnnihilation(
+        uint256 cid_,
+        uint256 pid_
+    ) external updateIdFirst(cid_) whenNotPaused {
+        (, uint256 grantAmount_) = _coupon.burn(pid_); // includes _update(pid_);
 
         CollateralizedDebtPosition storage _cdp = _cdps[cid_];
 
         if (_cdp.fee >= grantAmount_) {
             _cdp.fee -= grantAmount_;
+            totalFee -= _cdp.fee;
+        } else if (_cdp.debt + _cdp.fee < grantAmount_) {
+            totalDebt -= _cdp.debt;
+            _cdp.debt = 0; // -= _cdp.debt;
+
+            totalFee -= _cdp.fee;
+            _cdp.fee = 0; // -= _cdp.fee;
         } else {
-            _cdp.fee = 0;
             _cdp.debt -= (grantAmount_ - _cdp.fee);
+            totalDebt -= (grantAmount_ - _cdp.fee);
+
+            totalFee -= _cdp.fee;
+            _cdp.fee = 0; // -= _cdp.fee;
         }
     }
+
+    // TODO
+    // function buybackCouponWithPairAnnihilation() external {}
 }
